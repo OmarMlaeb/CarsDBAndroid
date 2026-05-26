@@ -90,6 +90,7 @@ public class MainActivity extends AppCompatActivity {
     private String detectedPlateKey = null;
     private String detectedCodeKey  = null;
     private String requestedColumnsTable = null;
+    private final Map<String, String> columnTypes = new HashMap<>();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -409,6 +410,7 @@ public class MainActivity extends AppCompatActivity {
         closeDatabase();
         db = SQLiteDatabase.openDatabase(file.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
         requestedColumnsTable = null;
+        columnTypes.clear();
     }
 
     private List<String> loadTablesInternal() {
@@ -428,10 +430,17 @@ public class MainActivity extends AppCompatActivity {
         requestedColumnsTable = table;
         io.submit(() -> {
             List<String> cols = new ArrayList<>();
+            Map<String, String> types = new HashMap<>();
             if (db != null) {
                 try (Cursor c = db.rawQuery("PRAGMA table_info('" + table.replace("'", "''") + "')", null)) {
-                    int idx = c.getColumnIndex("name");
-                    while (c.moveToNext()) cols.add(c.getString(idx));
+                    int nameIdx = c.getColumnIndex("name");
+                    int typeIdx = c.getColumnIndex("type");
+                    while (c.moveToNext()) {
+                        String name = c.getString(nameIdx);
+                        String type = typeIdx >= 0 ? c.getString(typeIdx) : "";
+                        cols.add(name);
+                        types.put(name.toLowerCase(Locale.US), type == null ? "" : type.toUpperCase(Locale.US));
+                    }
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
@@ -448,6 +457,8 @@ public class MainActivity extends AppCompatActivity {
 
             List<String> finalCols = cols;
             main.post(() -> {
+                columnTypes.clear();
+                columnTypes.putAll(types);
                 setSpinner(spinnerColumns, finalCols);  // WHERE column picker
                 adapter.setKeys(detectedPlateKey, detectedCodeKey);
             });
@@ -490,19 +501,22 @@ public class MainActivity extends AppCompatActivity {
             try {
                 String trimmed = q.trim();
                 boolean digitsOnly = trimmed.matches("\\d+");
+                boolean numericColumn = isNumericColumn(whereCol);
                 ensureSearchIndexInternal(table, whereCol);
 
                 // FAST PATH: exact match without functions on the column (keeps indexes usable)
-                String sql, sqlGuard = "", fallbackSql;
-                String[] args, fallbackArgs;
+                String sql, fallbackSql = null;
+                String[] args, fallbackArgs = null;
                 String quotedTable = quoteIdentifier(table);
                 String quotedWhereCol = quoteIdentifier(whereCol);
 
-                if (digitsOnly) {
+                if (digitsOnly && numericColumn) {
                     sql = "SELECT * FROM " + quotedTable + " WHERE " + quotedWhereCol + " = ? LIMIT 200";
                     args = new String[]{ trimmed };
-                    // optional guard (exclude '1234 A'); used only in fallback
-                    sqlGuard = " AND (" + quotedWhereCol + " GLOB '[0-9]*' OR " + quotedWhereCol + " GLOB '[0-9]*.[0]*') ";
+                } else if (digitsOnly) {
+                    sql = "SELECT * FROM " + quotedTable + " WHERE " + quotedWhereCol + " = ? LIMIT 200";
+                    args = new String[]{ trimmed };
+                    String sqlGuard = " AND (" + quotedWhereCol + " GLOB '[0-9]*' OR " + quotedWhereCol + " GLOB '[0-9]*.[0]*') ";
                     fallbackSql = "SELECT * FROM " + quotedTable + " WHERE TRIM(" + quotedWhereCol + ") = ? " +
                             sqlGuard + "LIMIT 200";
                     fallbackArgs = new String[]{ trimmed };
@@ -516,8 +530,9 @@ public class MainActivity extends AppCompatActivity {
 
                 queryIntoRows(db, sql, args, rows);
 
-                // Fallback for dirty trailing spaces in data (only if fast path found nothing)
-                if (rows.isEmpty()) queryIntoRows(db, fallbackSql, fallbackArgs, rows);
+                if (rows.isEmpty() && fallbackSql != null) {
+                    queryIntoRows(db, fallbackSql, fallbackArgs, rows);
+                }
 
             } catch (Exception e) {
                 e.printStackTrace();
@@ -536,6 +551,15 @@ public class MainActivity extends AppCompatActivity {
                 tvEmptyState.setVisibility(rows.isEmpty() ? View.VISIBLE : View.GONE);
             });
         });
+    }
+
+    private boolean isNumericColumn(String col) {
+        if (col == null) return false;
+        String type = columnTypes.get(col.toLowerCase(Locale.US));
+        if (type == null) return false;
+        return type.contains("INT") || type.contains("REAL")
+                || type.contains("FLOA") || type.contains("DOUB")
+                || type.contains("NUM");
     }
 
     private void ensureSearchIndexInternal(String table, String col) {
