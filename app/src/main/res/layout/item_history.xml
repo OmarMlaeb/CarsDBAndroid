@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/tvHistoryPlate"
+    android:textColor="@color/text_primary"
+    android:textStyle="bold"
+    android:textSize="13sp"
+    android:gravity="center"
+    android:singleLine="true"
+    android:ellipsize="end"
+    android:background="@drawable/bg_history_chip"
+    android:paddingStart="12dp"
+    android:paddingEnd="12dp"
+    android:layout_marginEnd="8dp"
+    android:layout_width="wrap_content"
+    android:layout_height="34dp" />
